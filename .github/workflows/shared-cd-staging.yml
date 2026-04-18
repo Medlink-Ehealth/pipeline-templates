@@ -1,0 +1,317 @@
+name: Staging CD Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      cluster-name:
+        description: "AKS cluster name"
+        required: true
+        type: string
+      resource-group:
+        description: "Azure resource group containing the AKS cluster"
+        required: true
+        type: string
+      namespace:
+        description: "Kubernetes namespace to deploy into"
+        required: false
+        type: string
+        default: "staging"
+      release-name:
+        description: "Helm release name"
+        required: true
+        type: string
+      chart-path:
+        description: "Path to the Helm chart (local path or repo/chart)"
+        required: true
+        type: string
+      values-file:
+        description: "Path to the Helm values file for staging"
+        required: false
+        type: string
+        default: ""
+      image-tag:
+        description: "Docker image tag to deploy (typically the git SHA)"
+        required: true
+        type: string
+      image-repository:
+        description: "Full image repository (e.g. myregistry.azurecr.io/my-app)"
+        required: true
+        type: string
+      helm-timeout:
+        description: "Timeout for helm upgrade --atomic"
+        required: false
+        type: string
+        default: "5m"
+      health-endpoints:
+        description: 'JSON array of health check URLs (e.g. ["https://api.staging.example.com/health","https://web.staging.example.com/health"])'
+        required: true
+        type: string
+      health-retries:
+        description: "Number of retry attempts for each health check"
+        required: false
+        type: number
+        default: 10
+      health-retry-delay:
+        description: "Seconds to wait between health check retries"
+        required: false
+        type: number
+        default: 15
+      slack-channel:
+        description: "Slack channel for notifications (e.g. #deployments). Leave empty to skip"
+        required: false
+        type: string
+        default: ""
+      helm-set-values:
+        description: "Additional --set overrides for helm upgrade (e.g. replicas=2,resources.cpu=250m)"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+      SLACK_WEBHOOK_URL:
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Helm Deploy (atomic)
+  # ──────────────────────────────────────────────
+  deploy:
+    name: Helm Deploy to Staging
+    runs-on: ubuntu-latest
+    outputs:
+      previous-revision: ${{ steps.pre-deploy.outputs.revision }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials
+        run: az aks get-credentials --resource-group ${{ inputs.resource-group }} --name ${{ inputs.cluster-name }} --overwrite-existing
+
+      - name: Capture current revision
+        id: pre-deploy
+        run: |
+          REVISION=$(helm history ${{ inputs.release-name }} \
+            --namespace ${{ inputs.namespace }} \
+            --max 1 \
+            --output json 2>/dev/null | jq -r '.[0].revision // empty') || true
+          echo "revision=${REVISION:-0}" >> "$GITHUB_OUTPUT"
+
+      - name: Helm upgrade (atomic)
+        run: |
+          HELM_CMD="helm upgrade ${{ inputs.release-name }} ${{ inputs.chart-path }} \
+            --install \
+            --atomic \
+            --wait \
+            --timeout ${{ inputs.helm-timeout }} \
+            --namespace ${{ inputs.namespace }} \
+            --create-namespace \
+            --set image.repository=${{ inputs.image-repository }} \
+            --set image.tag=${{ inputs.image-tag }}"
+
+          if [ -n "${{ inputs.values-file }}" ]; then
+            HELM_CMD="$HELM_CMD --values ${{ inputs.values-file }}"
+          fi
+
+          if [ -n "${{ inputs.helm-set-values }}" ]; then
+            IFS=',' read -ra OVERRIDES <<< "${{ inputs.helm-set-values }}"
+            for override in "${OVERRIDES[@]}"; do
+              HELM_CMD="$HELM_CMD --set $override"
+            done
+          fi
+
+          eval $HELM_CMD
+
+  # ──────────────────────────────────────────────
+  # Smoke Tests
+  # ──────────────────────────────────────────────
+  smoke-test:
+    name: Smoke Test Health Endpoints
+    runs-on: ubuntu-latest
+    needs: deploy
+    outputs:
+      status: ${{ steps.health-check.outputs.status }}
+    steps:
+      - name: Run health checks
+        id: health-check
+        run: |
+          ENDPOINTS='${{ inputs.health-endpoints }}'
+          RETRIES=${{ inputs.health-retries }}
+          DELAY=${{ inputs.health-retry-delay }}
+          FAILED=0
+
+          for ENDPOINT in $(echo "$ENDPOINTS" | jq -r '.[]'); do
+            echo "──────────────────────────────────────"
+            echo "Checking: $ENDPOINT"
+            echo "──────────────────────────────────────"
+            SUCCESS=false
+
+            for i in $(seq 1 "$RETRIES"); do
+              HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$ENDPOINT" 2>/dev/null) || HTTP_STATUS="000"
+              echo "  Attempt $i/$RETRIES — HTTP $HTTP_STATUS"
+
+              if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+                echo "  ✓ Healthy"
+                SUCCESS=true
+                break
+              fi
+
+              if [ "$i" -lt "$RETRIES" ]; then
+                sleep "$DELAY"
+              fi
+            done
+
+            if [ "$SUCCESS" = false ]; then
+              echo "  ✗ FAILED after $RETRIES attempts"
+              FAILED=$((FAILED + 1))
+            fi
+          done
+
+          if [ "$FAILED" -gt 0 ]; then
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            echo ""
+            echo "══════════════════════════════════════"
+            echo "SMOKE TEST FAILED — $FAILED endpoint(s) unhealthy"
+            echo "══════════════════════════════════════"
+            exit 1
+          fi
+
+          echo "status=passed" >> "$GITHUB_OUTPUT"
+          echo ""
+          echo "══════════════════════════════════════"
+          echo "ALL ENDPOINTS HEALTHY"
+          echo "══════════════════════════════════════"
+
+  # ──────────────────────────────────────────────
+  # Auto-Rollback on Smoke Test Failure
+  # ──────────────────────────────────────────────
+  rollback:
+    name: Rollback on Failure
+    runs-on: ubuntu-latest
+    needs: [deploy, smoke-test]
+    if: failure() && needs.deploy.result == 'success'
+    steps:
+      - name: Azure login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials
+        run: az aks get-credentials --resource-group ${{ inputs.resource-group }} --name ${{ inputs.cluster-name }} --overwrite-existing
+
+      - name: Helm rollback
+        run: |
+          PREV_REVISION=${{ needs.deploy.outputs.previous-revision }}
+          echo "Rolling back ${{ inputs.release-name }} in namespace ${{ inputs.namespace }}"
+
+          if [ "$PREV_REVISION" -gt 0 ] 2>/dev/null; then
+            echo "Rolling back to revision $PREV_REVISION"
+            helm rollback ${{ inputs.release-name }} "$PREV_REVISION" \
+              --namespace ${{ inputs.namespace }} \
+              --wait \
+              --timeout ${{ inputs.helm-timeout }}
+          else
+            echo "No previous revision found — uninstalling failed release"
+            helm uninstall ${{ inputs.release-name }} \
+              --namespace ${{ inputs.namespace }} \
+              --wait \
+              --timeout ${{ inputs.helm-timeout }}
+          fi
+
+          echo ""
+          echo "══════════════════════════════════════"
+          echo "ROLLBACK COMPLETE"
+          echo "══════════════════════════════════════"
+
+  # ──────────────────────────────────────────────
+  # Slack Notification
+  # ──────────────────────────────────────────────
+  notify:
+    name: Slack Notification
+    runs-on: ubuntu-latest
+    needs: [deploy, smoke-test, rollback]
+    if: always() && inputs.slack-channel != ''
+    steps:
+      - name: Determine outcome
+        id: outcome
+        run: |
+          if [ "${{ needs.smoke-test.result }}" = "success" ]; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+            echo "color=#36a64f" >> "$GITHUB_OUTPUT"
+            echo "title=Staging Deploy Succeeded" >> "$GITHUB_OUTPUT"
+            echo "message=${{ inputs.release-name }} (${{ inputs.image-tag }}) deployed to ${{ inputs.namespace }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ needs.rollback.result }}" = "success" ]; then
+            echo "status=rolled_back" >> "$GITHUB_OUTPUT"
+            echo "color=#ff9900" >> "$GITHUB_OUTPUT"
+            echo "title=Staging Deploy Rolled Back" >> "$GITHUB_OUTPUT"
+            echo "message=${{ inputs.release-name }} (${{ inputs.image-tag }}) failed smoke tests and was rolled back in ${{ inputs.namespace }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ needs.deploy.result }}" = "failure" ]; then
+            echo "status=deploy_failed" >> "$GITHUB_OUTPUT"
+            echo "color=#dc3545" >> "$GITHUB_OUTPUT"
+            echo "title=Staging Deploy Failed" >> "$GITHUB_OUTPUT"
+            echo "message=Helm upgrade for ${{ inputs.release-name }} (${{ inputs.image-tag }}) failed in ${{ inputs.namespace }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=rollback_failed" >> "$GITHUB_OUTPUT"
+            echo "color=#dc3545" >> "$GITHUB_OUTPUT"
+            echo "title=Staging Deploy & Rollback Failed" >> "$GITHUB_OUTPUT"
+            echo "message=${{ inputs.release-name }} (${{ inputs.image-tag }}) failed smoke tests and rollback also failed in ${{ inputs.namespace }}. Manual intervention required!" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Send Slack notification
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "channel": "${{ inputs.slack-channel }}",
+              "attachments": [
+                {
+                  "color": "${{ steps.outcome.outputs.color }}",
+                  "blocks": [
+                    {
+                      "type": "header",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "${{ steps.outcome.outputs.title }}"
+                      }
+                    },
+                    {
+                      "type": "section",
+                      "fields": [
+                        { "type": "mrkdwn", "text": "*Release:*\n${{ inputs.release-name }}" },
+                        { "type": "mrkdwn", "text": "*Namespace:*\n${{ inputs.namespace }}" },
+                        { "type": "mrkdwn", "text": "*Image Tag:*\n`${{ inputs.image-tag }}`" },
+                        { "type": "mrkdwn", "text": "*Status:*\n${{ steps.outcome.outputs.status }}" }
+                      ]
+                    },
+                    {
+                      "type": "context",
+                      "elements": [
+                        {
+                          "type": "mrkdwn",
+                          "text": "<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View workflow run> | Triggered by ${{ github.actor }}"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
