@@ -27,7 +27,7 @@ on:
         description: "Path to Dockerfile"
         required: false
         type: string
-        default: "./Dockerfile"
+        default: ""
       docker-context:
         description: "Docker build context"
         required: false
@@ -237,17 +237,16 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ inputs.image-name }}:${{ github.sha }}
-          format: table #sarif (diff option)
+          format: sarif #sarif (diff option)
           exit-code: "1"
           vuln-type: 'os,library'
           severity: CRITICAL,HIGH
           ignore-unfixed: true
 
-      - name: Upload Trivy SARIF to GitHub Security
-        if: always()             # upload even when the scan step fails
+      - name: Upload Trivy SARIF to GitHub Security           # upload even when the scan step fails
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: trivy-results.table
+          sarif_file: trivy-results.sarif
           category: trivy
 
   # ──────────────────────────────────────────────
