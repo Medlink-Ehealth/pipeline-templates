@@ -83,8 +83,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
-          cache: "pnpm"
-          cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+          cache: 'pnpm'
+          cache-dependency-path: './pnpm-lock.yaml'
 
       - name: Run ESLint
         run: npx eslint . --max-warnings 0
@@ -176,7 +176,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: javascript-typescript
           queries: security-extended
