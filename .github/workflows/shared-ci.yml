@@ -75,16 +75,16 @@ jobs:
         with:
           version: ${{ inputs.pnpm-version }}
 
+      - name: Install dependencies
+        # run: pnpm run lint
+        run: pnpm install --no-frozen-lockfile
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
           cache: "pnpm"
           cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
-
-      - name: Install dependencies
-        run: pnpm run lint
-        # run: pnpm install --no-frozen-lockfile
 
       - name: Run ESLint
         run: npx eslint . --max-warnings 0
@@ -105,14 +105,14 @@ jobs:
         with:
           version: ${{ inputs.pnpm-version }}
 
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
           cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
 
       # common must be compiled before auth-service types can resolve
       - name: Build common
@@ -134,13 +134,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
           cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
 
       - name: Install coverage provider
         run: pnpm add -D @vitest/coverage-v8 -w
@@ -201,8 +201,7 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # required for private repos on free plan
-
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
   # ──────────────────────────────────────────────
   # Docker Build + Trivy Scan
