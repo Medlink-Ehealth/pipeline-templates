@@ -3,16 +3,6 @@ name: Node.js CI Pipeline
 on:
   workflow_call:
     inputs:
-      node-version:
-        description: "Node.js version to use"
-        required: false
-        type: string
-        default: "20"
-      pnpm-version:
-        description: "pnpm version to use (optional, will use latest if not specified)"
-        required: false
-        type: string
-        default: "9"
       working-directory:
         description: "Working directory for the project"
         required: false
