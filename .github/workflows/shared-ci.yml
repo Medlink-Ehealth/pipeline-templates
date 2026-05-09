@@ -40,6 +40,8 @@ on:
         required: false
       AZURE_SUBSCRIPTION_ID:
         required: false
+      GITLEAKS_LICENSE:
+        required: false
 
 permissions:
   contents: read
@@ -89,22 +91,6 @@ jobs:
           tags: ${{ inputs.image-name }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      # - name: Trivy vulnerability scan
-      #   uses: aquasecurity/trivy-action@v0.36.0
-      #   with:
-      #     image-ref: ${{ inputs.image-name }}:${{ github.sha }}
-      #     format: sarif #sarif (diff option)
-      #     exit-code: "1"
-      #     vuln-type: 'os,library'
-      #     severity: CRITICAL,HIGH
-      #     ignore-unfixed: true
-
-      # - name: Upload Trivy SARIF to GitHub Security           # upload even when the scan step fails
-      #   uses: github/codeql-action/upload-sarif@v3
-      #   with:
-      #     sarif_file: trivy-results.sarif
-      #     category: trivy
 
   # ──────────────────────────────────────────────
   # Push to Azure Container Registry (OIDC)
