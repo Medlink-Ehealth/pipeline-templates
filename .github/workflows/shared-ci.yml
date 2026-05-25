@@ -127,7 +127,7 @@ jobs:
           file: ${{ inputs.dockerfile-path }}
           push: true
           tags: |
-            ${{ inputs.acr-login-server }}/${{ inputs.image-name }}:${{ github.sha }}
-            ${{ inputs.acr-login-server }}/${{ inputs.image-name }}:latest
+            ${{ inputs.acr-login-server }}.azurecr.io/${{ inputs.image-name }}:${{ github.sha }}
+            ${{ inputs.acr-login-server }}.azurecr.io/${{ inputs.image-name }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
