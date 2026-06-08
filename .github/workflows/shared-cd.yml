@@ -15,7 +15,7 @@ on:
         description: "Kubernetes namespace to deploy into"
         required: false
         type: string
-        default: "staging"
+        default: "dev"
       release-name:
         description: "Helm release name"
         required: true
@@ -33,6 +33,7 @@ on:
         description: "Docker image tag to deploy (typically the git SHA)"
         required: true
         type: string
+        default: "latest"
       image-repository:
         description: "Full image repository (e.g. myregistry.azurecr.io/my-app)"
         required: true
@@ -56,16 +57,16 @@ on:
         required: false
         type: number
         default: 15
-      slack-channel:
-        description: "Slack channel for notifications (e.g. #deployments). Leave empty to skip"
-        required: false
-        type: string
-        default: ""
-      helm-set-values:
-        description: "Additional --set overrides for helm upgrade (e.g. replicas=2,resources.cpu=250m)"
-        required: false
-        type: string
-        default: ""
+      # slack-channel:
+      #   description: "Slack channel for notifications (e.g. #deployments). Leave empty to skip"
+      #   required: false
+      #   type: string
+      #   default: ""
+      # helm-set-values:
+      #   description: "Additional --set overrides for helm upgrade (e.g. replicas=2,resources.cpu=250m)"
+      #   required: false
+      #   type: string
+      #   default: ""
     secrets:
       AZURE_CLIENT_ID:
         required: true
