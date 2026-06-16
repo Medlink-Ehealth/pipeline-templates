@@ -45,7 +45,7 @@ on:
         default: "5m"
       health-endpoints:
         description: 'JSON array of health check URLs (e.g. ["https://api.staging.example.com/health","https://web.staging.example.com/health"])'
-        required: true
+        required: false
         type: string
       health-retries:
         description: "Number of retry attempts for each health check"
