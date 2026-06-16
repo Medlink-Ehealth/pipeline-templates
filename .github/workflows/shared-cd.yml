@@ -82,7 +82,7 @@ permissions:
 
 jobs:
   # ──────────────────────────────────────────────
-  # Helm Deploy (atomic)
+  # Helm Deploy
   # ──────────────────────────────────────────────
   deploy:
     name: Helm Deploy
@@ -112,12 +112,10 @@ jobs:
             --output json 2>/dev/null | jq -r '.[0].revision // empty') || true
           echo "revision=${REVISION:-0}" >> "$GITHUB_OUTPUT"
 
-      - name: Helm upgrade (atomic)
+      - name: Helm upgrade
         run: |
           HELM_CMD="helm upgrade ${{ inputs.release-name }} ${{ inputs.chart-path }} \
             --install \
-            --atomic \
-            --wait \
             --timeout ${{ inputs.helm-timeout }} \
             --namespace ${{ inputs.namespace }} \
             --create-namespace \
